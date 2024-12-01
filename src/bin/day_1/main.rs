@@ -42,32 +42,73 @@ impl SortedInput {
         return Self::new(left, right);
     }
 
-    pub fn new(left: Vec<u32>, right: Vec<u32>) -> Self {
+    pub fn new(mut left: Vec<u32>, mut right: Vec<u32>) -> Self {
         assert_eq!(left.len(), right.len());
+
+        left.sort();
+        right.sort();
+
         Self(left, right)
     }
 
-    pub fn get_pairs(mut self) -> Vec<Pair> {
+    pub fn get_pairs(&self) -> Vec<Pair> {
         assert_eq!(self.0.len(), self.1.len());
-        self.0.sort();
-        self.1.sort();
 
         return self
             .0
             .iter()
-            .zip(self.1)
-            .map(|(left, right)| Pair::new(left.clone(), right))
+            .zip(&self.1)
+            .map(|(left, right)| Pair::new(left.clone(), right.clone()))
             .collect();
+    }
+
+    pub fn similarity_score(&self) -> u32 {
+        let mut score_total = 0;
+        let mut right_i = 0;
+
+        for x in self.0.iter() {
+            let (score, i) = Self::score_item(x, &self.1[right_i..]);
+
+            score_total += x * score;
+            right_i += i as usize;
+        }
+
+        return score_total;
+    }
+
+    fn score_item(value: &u32, right: &[u32]) -> (u32, u32) {
+        let mut counter = 0;
+        let mut i = 0;
+
+        for x in right.iter() {
+            if x > value {
+                return (counter, i);
+            } else if x == value {
+                counter += 1;
+            }
+
+            i += 1;
+        }
+
+        return (counter, i);
     }
 }
 
 fn main() -> Result<(), io::Error> {
     let contents = fs::read_to_string("src/inputs/day1.txt")?;
 
-    let pairs = SortedInput::parse(contents).get_pairs();
+    let sorted = SortedInput::parse(contents);
+
+    // Part 1
+    let pairs = sorted.get_pairs();
     let sum = Pair::total_distance(pairs);
 
-    println!("total distance: {}", sum);
+    println!("Part 1:\ntotal distance = {}\n", sum);
+
+    // Part 2
+    let similarity_score = sorted.similarity_score();
+
+    println!("Part 2:\nsimilarity score = {}", similarity_score);
 
     return Ok(());
 }
