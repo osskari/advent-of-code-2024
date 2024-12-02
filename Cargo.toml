@@ -8,4 +8,8 @@ edition = "2021"
 name = "day_1"
 src = "src/bin/day_1/main.rs"
 
+[[bin]]
+name = "day_2"
+src = "src/bin/day_2/main.rs"
+
 [dependencies]
