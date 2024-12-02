@@ -1,4 +1,4 @@
-use std::{fs, io};
+use std::{fs, io, usize};
 
 #[derive(Debug)]
 struct Row(Vec<u32>);
@@ -45,6 +45,30 @@ impl Row {
 
         return true;
     }
+
+    pub fn is_safe_dampened(&self) -> bool {
+        assert!(self.0.len() >= 2);
+
+        if self.is_safe() {
+            return true;
+        }
+
+        for index in 0..self.0.len() {
+            let one_removed: Vec<_> = self
+                .0
+                .iter()
+                .enumerate()
+                .filter(|&(i, _)| i as usize != index)
+                .map(|(_, x)| x.clone())
+                .collect();
+
+            if Self(one_removed).is_safe() {
+                return true;
+            }
+        }
+
+        return false;
+    }
 }
 
 #[derive(Debug)]
@@ -81,10 +105,15 @@ impl Direction {
 fn main() -> Result<(), io::Error> {
     let contents = fs::read_to_string("src/inputs/day2.txt")?;
 
-    // Part 1
     let rows = Row::parse_lines(contents);
+
+    // Part 1
     let safe_count = rows.iter().filter(|x| x.is_safe()).count();
     println!("Part 1:\nsafe count = {}\n", safe_count);
+
+    // Part 2
+    let safe_count = rows.iter().filter(|x| x.is_safe_dampened()).count();
+    println!("Part 2:\ndampened safe count = {}", safe_count);
 
     return Ok(());
 }
