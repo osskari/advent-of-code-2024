@@ -1,99 +1,152 @@
 use core::str;
 use std::{fs, io, usize};
 
-fn parse(contents: &[u8], on_off: bool) -> Vec<(u32, u32)> {
-    let mut ret = vec![];
-    let mut i = 0;
-    let mut is_on = true;
-    while i < contents.len() {
-        if on_off && &contents[i..contents.len().min(i + 4)] == b"do()" {
-            is_on = true;
-            i += 4;
-        }
+struct TokenList(Vec<Token>);
 
-        if on_off && &contents[i..contents.len().min(i + 7)] == b"don't()" {
-            is_on = false;
-            i += 7;
-        }
-
-        let upper_bound = contents.len().min(i + 4);
-
-        if !is_on || &contents[i..upper_bound] != b"mul(" {
-            i += 1;
-            continue;
-        }
-
-        i += 4;
-
-        if i >= contents.len() {
-            break;
-        }
-
-        let lhs = parse_number(&contents[i..], b',');
-        i += lhs.1;
-
-        if lhs.0.is_none() {
-            continue;
-        }
-
-        i += 1;
-
-        if i >= contents.len() {
-            break;
-        }
-
-        let rhs = parse_number(&contents[i..], b')');
-        i += rhs.1;
-
-        if rhs.0.is_none() {
-            continue;
-        }
-
-        ret.push((lhs.0.unwrap(), rhs.0.unwrap()));
-
-        i += 1;
-    }
-
-    return ret;
+enum RunOptions {
+    Default,
+    DoDont,
 }
 
-fn parse_number(contents: &[u8], end_byte: u8) -> (Option<u32>, usize) {
-    let mut i = 0;
+impl TokenList {
+    pub fn parse_string(contents: &[u8]) -> Self {
+        let mut i = 0;
+        let mut ret = vec![];
+        while i < contents.len() {
+            let token = Token::parse(&contents[i..]);
 
-    while i < contents.len() && contents[i] != end_byte {
-        let curr = contents[i] as char;
-        if !curr.is_numeric() {
+            if token.0.is_none() {
+                i += token.1;
+                continue;
+            }
+
+            ret.push(token.0.unwrap());
+
+            i += 1;
+        }
+        return Self(ret);
+    }
+
+    pub fn get_multsum(&self, opts: RunOptions) -> u32 {
+        let mut is_on = true;
+        let mut mults = vec![];
+
+        for x in self.0.iter() {
+            match x {
+                Token::Mul(pair) => {
+                    if is_on {
+                        mults.push(pair.mult());
+                    }
+                }
+                Token::Do => {
+                    if matches!(opts, RunOptions::DoDont) {
+                        is_on = true;
+                    }
+                }
+                Token::Dont => {
+                    if matches!(opts, RunOptions::DoDont) {
+                        is_on = false;
+                    }
+                }
+            }
+        }
+
+        return mults.iter().sum();
+    }
+}
+
+#[derive(Debug)]
+enum Token {
+    Mul(Pair),
+    Do,
+    Dont,
+}
+
+impl Token {
+    fn parse(contents: &[u8]) -> (Option<Self>, usize) {
+        if &contents[0..contents.len().min(4)] == b"do()" {
+            return (Some(Self::Do), 5);
+        } else if &contents[0..contents.len().min(7)] == b"don't()" {
+            return (Some(Self::Dont), 8);
+        } else if &contents[0..contents.len().min(4)] == b"mul(" {
+            let pair = Pair::parse(&contents[4..]);
+
+            if pair.is_none() {
+                return (None, 1);
+            }
+
+            let pair = pair.unwrap();
+            let i = pair.2;
+
+            return (Some(Self::Mul(pair)), i);
+        }
+        return (None, 1);
+    }
+}
+
+#[derive(Debug)]
+struct Pair(u32, u32, usize);
+
+impl Pair {
+    pub fn parse(contents: &[u8]) -> Option<Pair> {
+        let lhs = Self::parse_num(&contents, b',');
+        if lhs.0.is_none() {
+            return None;
+        }
+
+        let rhs = Self::parse_num(&contents[lhs.1..], b')');
+        if rhs.0.is_none() {
+            return None;
+        }
+
+        return Some(Pair(lhs.0?, rhs.0?, 4 + lhs.1 + rhs.1));
+    }
+
+    fn parse_num(contents: &[u8], end: u8) -> (Option<u32>, usize) {
+        let mut i = 0;
+        while i < contents.len() {
+            if contents[i] == end {
+                break;
+            } else if !(contents[i] as char).is_numeric() {
+                return (None, i);
+            }
+            i += 1;
+        }
+
+        let num = str::from_utf8(&contents[0..i]);
+        if num.is_err() {
             return (None, i);
         }
 
-        i += 1;
+        let num = num.unwrap().parse();
+        if num.is_err() {
+            return (None, i);
+        }
+
+        return (Some(num.unwrap()), i + 1);
     }
 
-    let number = str::from_utf8(&contents[0..i]);
-    if number.is_err() {
-        return (None, i);
+    pub fn mult(&self) -> u32 {
+        return self.0 * self.1;
     }
-
-    let number = number.unwrap().parse();
-    if number.is_err() {
-        return (None, i);
-    }
-
-    return (Some(number.unwrap()), i);
 }
 
 fn main() -> Result<(), io::Error> {
     let contents = fs::read_to_string("src/inputs/day3.txt")?;
 
+    let nums = TokenList::parse_string(contents.as_bytes());
+
     // Part 1
-    let nums = parse(contents.as_bytes(), false);
-    let mul_sum: u32 = nums.iter().map(|x| x.0 * x.1).sum();
-    println!("Part 1:\nmult sum = {}\n", mul_sum);
+    println!(
+        "Part 1:\nmult sum = {}\n",
+        nums.get_multsum(RunOptions::Default)
+    );
 
     // Part 2
-    let nums = parse(contents.as_bytes(), true);
-    let mul_sum: u32 = nums.iter().map(|x| x.0 * x.1).sum();
-    println!("Part 2:\nmult sum = {}\n", mul_sum);
+    println!(
+        "Part 2:\nmult sum = {}\n",
+        nums.get_multsum(RunOptions::DoDont)
+    );
 
     Ok(())
 }
