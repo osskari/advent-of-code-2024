@@ -4,12 +4,5 @@ version = "0.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-[[bin]]
-name = "day_1"
-src = "src/bin/day_1/main.rs"
-
-[[bin]]
-name = "day_2"
-src = "src/bin/day_2/main.rs"
 
 [dependencies]
