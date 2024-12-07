@@ -1,33 +1,28 @@
 use core::panic;
 use std::{
-    collections::{HashSet, VecDeque},
-    fs, isize, usize,
+    sync::{atomic::AtomicUsize, Arc},
+    time, usize,
 };
 
-#[derive(Debug, Clone)]
-struct State {
+use ahash::AHashSet;
+use itertools::Itertools;
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
+
+struct Grid {
     grid: Vec<Vec<Tile>>,
-    grid_bounds: Point,
-    guard: Guard,
+    bounds: Point,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Copy)]
 enum Tile {
     Obstacle,
-    Up,
-    Down,
-    Left,
-    Right,
     Nothing,
 }
 
-#[derive(Debug, Clone)]
-struct Guard(Point, Direction);
+#[derive(PartialEq, Eq, Copy, Clone, Hash)]
+struct Point(usize, usize);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-struct Point(isize, isize);
-
-#[derive(Debug, Clone)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum Direction {
     Up,
     Down,
@@ -35,226 +30,179 @@ enum Direction {
     Right,
 }
 
-impl State {
+#[derive(Hash, PartialEq, Eq, Clone, Copy)]
+struct State(Point, Direction);
+
+impl Grid {
     pub fn from(contents: &str) -> Self {
-        let mut guard = None;
         let grid: Vec<Vec<Tile>> = contents
             .trim()
             .lines()
-            .enumerate()
-            .map(|(i, x)| {
-                x.trim()
-                    .char_indices()
-                    .map(|(j, x)| {
-                        if guard.is_none() && Direction::is_direction(x) {
-                            guard = Some(Guard::from(x, i, j));
-                        }
-
-                        Tile::from(x)
-                    })
-                    .collect()
-            })
+            .map(|x| x.trim().chars().map(move |x| Tile::from(x)).collect())
             .collect();
 
-        assert!(guard.is_some());
+        let bounds = Point(grid.len(), grid[0].len());
+        Self { grid, bounds }
+    }
 
-        let bounds = Point::from(grid.len(), grid[0].len());
-
+    fn with(&self, obstacle: Point) -> Self {
+        let mut g = self.grid.clone();
+        g[obstacle.0][obstacle.1] = Tile::Obstacle;
         Self {
-            grid,
-            grid_bounds: bounds,
-            guard: guard.unwrap(),
+            grid: g,
+            bounds: self.bounds,
         }
     }
 
-    fn count_touched(&self) -> usize {
-        let mut copy = self.clone();
-        let mut touched = HashSet::new();
+    pub fn move_until_oob<F>(&self, state: State, mut func: F)
+    where
+        F: FnMut(&State) -> bool,
+    {
+        let mut direction = state.1;
+        let mut state = state;
 
-        touched.insert((copy.guard.0 .0, copy.guard.0 .1));
-        while copy.move_guard() {
-            touched.insert((copy.guard.0 .0, copy.guard.0 .1));
+        if func(&state) {
+            return;
         }
 
-        touched.len()
-    }
-
-    fn count_loops(&self) -> usize {
-        let mut count = 0;
-        for (i, x) in self.grid.iter().enumerate() {
-            for j in 0..x.len() {
-                let mut copy = self.clone();
-                if copy.detect_loop(Point::from(i, j)) {
-                    count += 1;
+        loop {
+            let next = match state.get_next(self.bounds, direction) {
+                Some(s) => s,
+                None => {
+                    return;
                 }
-            }
-        }
-
-        count
-    }
-
-    fn detect_loop(&mut self, extra_obstruction: Point) -> bool {
-        if extra_obstruction == self.guard.0 {
-            return false;
-        }
-
-        let eo = extra_obstruction.unsigned();
-
-        if matches!(self.grid[eo.0][eo.1], Tile::Obstacle) {
-            return false;
-        }
-
-        self.grid[eo.0][eo.1] = Tile::Obstacle;
-
-        let mut triples: HashSet<Point> = HashSet::new();
-        let mut buffer = VecDeque::with_capacity(2);
-
-        while self.move_guard() {
-            let current = self.guard.0.unsigned();
-
-            if buffer.len() == 2 && buffer[0] == self.guard.0 && buffer[1] == self.guard.0 {
-                if !triples.insert(self.guard.0.clone()) {
-                    return true;
-                }
-            }
-
-            let tile_value = match self.guard.1 {
-                Direction::Up => Tile::Up,
-                Direction::Down => Tile::Down,
-                Direction::Left => Tile::Left,
-                Direction::Right => Tile::Right,
             };
 
-            if self.grid[current.0][current.1] == tile_value {
-                return true;
+            if self.is_tile_obstacle(next.0 .0, next.0 .1) {
+                direction = next.rotate();
+                continue;
+            } else {
+                state = next;
+                if func(&state) {
+                    return;
+                }
             }
-
-            self.grid[current.0][current.1] = tile_value.clone();
-
-            buffer.push_back(self.guard.0);
         }
-
-        return false;
     }
 
-    fn move_guard(&mut self) -> bool {
-        let mut next_pos = self.guard.get_next_pos();
-        let is_valid = next_pos.inbounds(&self.grid_bounds);
-
-        if !is_valid {
-            return false;
+    fn is_tile_obstacle(&self, i: usize, j: usize) -> bool {
+        match self.grid[i][j] {
+            Tile::Obstacle => true,
+            Tile::Nothing => false,
         }
-
-        let mut rotate_count = 0;
-        while self.has_obstacle(&next_pos) {
-            self.guard.rotate();
-
-            if rotate_count >= 3 {
-                return true;
-            }
-            rotate_count += 1;
-
-            next_pos = self.guard.get_next_pos();
-        }
-
-        self.guard.0 = next_pos;
-
-        return true;
     }
 
-    fn has_obstacle(&self, next_pos: &Point) -> bool {
-        let next_pos = next_pos.unsigned();
-        matches!(self.grid[next_pos.0][next_pos.1], Tile::Obstacle)
+    fn count_touched_tiles(&self, state: State) -> usize {
+        let mut touched: AHashSet<Point> = AHashSet::new();
+
+        self.move_until_oob(state, |s| {
+            touched.insert(s.0);
+            false
+        });
+
+        return touched.len();
+    }
+
+    fn count_all_loops(&self, state: State) -> usize {
+        let loops = Arc::new(AtomicUsize::new(0));
+
+        let placements: Vec<_> = (0..self.bounds.0)
+            .cartesian_product(0..self.bounds.1)
+            .filter(|(i, j)| *i != state.0 .0 && *j != state.0 .1 || !self.is_tile_obstacle(*i, *j))
+            .collect();
+
+        placements.into_par_iter().for_each(|(i, j)| {
+            let point = Point(i, j);
+            let grid = self.with(point);
+
+            let mut touched: AHashSet<State> = AHashSet::with_capacity(3000);
+
+            grid.move_until_oob(state, |s| {
+                if !touched.insert(s.clone()) {
+                    loops.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    return true;
+                }
+                return false;
+            });
+        });
+
+        return loops.load(std::sync::atomic::Ordering::SeqCst);
     }
 }
 
 impl Tile {
     pub fn from(c: char) -> Self {
         if c == '#' {
-            return Self::Obstacle;
+            Self::Obstacle
+        } else {
+            Self::Nothing
         }
-        return Self::Nothing;
     }
 }
 
-impl Guard {
-    fn from(c: char, i: usize, j: usize) -> Self {
-        Self(Point::from(i, j), Direction::from(c))
-    }
-
-    fn get_next_pos(&self) -> Point {
-        match self.1 {
-            Direction::Up => Point(self.0 .0 - 1, self.0 .1),
-            Direction::Down => Point(self.0 .0 + 1, self.0 .1),
-            Direction::Left => Point(self.0 .0, self.0 .1 - 1),
-            Direction::Right => Point(self.0 .0, self.0 .1 + 1),
+impl State {
+    pub fn from(contents: &str) -> Self {
+        for (i, x) in contents.trim().lines().enumerate() {
+            for (j, x) in x.char_indices() {
+                let direction = match x {
+                    '^' => Direction::Up,
+                    'v' => Direction::Down,
+                    '<' => Direction::Left,
+                    '>' => Direction::Right,
+                    _ => continue,
+                };
+                return State(Point(i, j), direction);
+            }
         }
+        panic!("No guard in input");
     }
 
-    fn rotate(&mut self) {
-        self.1 = match self.1 {
+    pub fn get_next(&self, bounds: Point, direction: Direction) -> Option<Self> {
+        let next = match direction {
+            Direction::Up => (self.0 .0.wrapping_sub(1), self.0 .1),
+            Direction::Down => (self.0 .0.wrapping_add(1), self.0 .1),
+            Direction::Left => (self.0 .0, self.0 .1.wrapping_sub(1)),
+            Direction::Right => (self.0 .0, self.0 .1.wrapping_add(1)),
+        };
+
+        if next.0 == usize::MAX || next.0 == bounds.0 || next.1 == usize::MAX || next.1 == bounds.1
+        {
+            return None;
+        }
+
+        return Some(State(Point(next.0, next.1), direction));
+    }
+
+    fn rotate(&self) -> Direction {
+        match self.1 {
             Direction::Up => Direction::Right,
             Direction::Down => Direction::Left,
             Direction::Left => Direction::Up,
             Direction::Right => Direction::Down,
-        };
-    }
-}
-
-impl Point {
-    fn from(i: usize, j: usize) -> Self {
-        let i = i.try_into();
-        assert!(i.is_ok());
-
-        let j = j.try_into();
-        assert!(j.is_ok());
-
-        Self(i.unwrap(), j.unwrap())
-    }
-
-    fn inbounds(&self, bounds: &Point) -> bool {
-        self.0 >= 0 && self.1 >= 0 && self.0 < bounds.0 && self.1 < bounds.1
-    }
-
-    fn unsigned(&self) -> (usize, usize) {
-        assert!(self.0 >= 0);
-        assert!(self.1 >= 0);
-
-        (self.0.try_into().unwrap(), self.1.try_into().unwrap())
-    }
-}
-
-impl Direction {
-    fn from(c: char) -> Self {
-        assert!(Self::is_direction(c));
-        match c {
-            '^' => Direction::Up,
-            'v' => Direction::Down,
-            '<' => Direction::Left,
-            '>' => Direction::Right,
-            _ => panic!(""),
-        }
-    }
-
-    fn is_direction(c: char) -> bool {
-        match c {
-            '^' | 'v' | '<' | '>' => true,
-            _ => false,
         }
     }
 }
 
 fn main() -> Result<(), std::io::Error> {
-    let contents = fs::read_to_string("src/inputs/day6.txt")?;
+    let contents = std::fs::read_to_string("src/inputs/day6.txt")?;
     let state = State::from(&contents);
+    let grid = Grid::from(&contents);
 
-    // Part 1
-    let count = state.count_touched();
-    println!("Part 1: touched count = {}", count);
+    let start = time::Instant::now();
+    let count = grid.count_touched_tiles(state);
+    println!(
+        "Part 1: count = {}, completed in: {:?}\n",
+        count,
+        start.elapsed()
+    );
 
-    // Part 2
-    let loop_count = state.count_loops();
-    println!("Part 2: loop count = {}", loop_count);
+    let start = time::Instant::now();
+    let count = grid.count_all_loops(state);
+    println!(
+        "Part 2: count = {}, completed in: {:?}\n",
+        count,
+        start.elapsed()
+    );
 
     Ok(())
 }
