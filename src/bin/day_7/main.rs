@@ -65,23 +65,22 @@ impl Equation {
     fn find_solution(&self, operators: &Vec<Operator>) -> usize {
         let windows: Vec<_> = self.numbers.windows(2).collect();
 
-        let combinations: Vec<Vec<_>> = (0..windows.len())
+        (0..windows.len())
             .map(|_| operators.iter().cloned().collect::<Vec<_>>())
             .multi_cartesian_product()
-            .collect();
+            .map(|combo| {
+                let mut sum = windows[0][0];
+                for (i, x) in combo.iter().enumerate() {
+                    sum = x.calculate(sum, windows[i][1]);
+                }
 
-        for combo in combinations {
-            let mut sum = windows[0][0];
-            for (i, x) in combo.iter().enumerate() {
-                sum = x.calculate(sum, windows[i][1]);
-            }
-
-            if sum == self.solution {
-                return sum;
-            }
-        }
-
-        0
+                if sum == self.solution {
+                    sum
+                } else {
+                    0
+                }
+            })
+            .sum()
     }
 }
 
