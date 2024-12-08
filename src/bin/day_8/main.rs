@@ -129,6 +129,7 @@ fn main() -> Result<(), std::io::Error> {
         start.elapsed()
     );
 
+    // Part 2
     let start = time::Instant::now();
     let count = iterate_all_pairs(&antenae, |first, second| {
         first.find_all_inline_antinodes(&second, &bounds)
