@@ -124,7 +124,7 @@ fn main() -> Result<(), std::io::Error> {
     });
 
     println!(
-        "Part 1: count = {}, competed in = {:?}\n",
+        "Part 1: count = {}, completed in = {:?}\n",
         count,
         start.elapsed()
     );
@@ -136,7 +136,7 @@ fn main() -> Result<(), std::io::Error> {
     });
 
     println!(
-        "Part 2: count = {}, competed in = {:?}\n",
+        "Part 2: count = {}, completed in = {:?}\n",
         count,
         start.elapsed()
     );

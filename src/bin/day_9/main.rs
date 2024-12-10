@@ -223,7 +223,7 @@ fn main() -> Result<(), std::io::Error> {
     let mut flat = map.clone().flatten();
     flat.frag();
     println!(
-        "Part 1: checksum = {}, competed in = {:?}\n",
+        "Part 1: checksum = {}, completed in = {:?}\n",
         flat.checksum(),
         start.elapsed()
     );
@@ -232,7 +232,7 @@ fn main() -> Result<(), std::io::Error> {
     let start = time::Instant::now();
     map.defrag();
     println!(
-        "Part 2: checksum = {}, competed in = {:?}\n",
+        "Part 2: checksum = {}, completed in = {:?}\n",
         map.checksum(),
         start.elapsed()
     );
