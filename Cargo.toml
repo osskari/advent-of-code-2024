@@ -8,4 +8,5 @@ edition = "2021"
 [dependencies]
 ahash = "0.8.11"
 itertools = "0.13.0"
+petgraph = "0.6.5"
 rayon = "1.10.0"
